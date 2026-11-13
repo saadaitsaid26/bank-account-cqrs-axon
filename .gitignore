@@ -1,0 +1,40 @@
+# ---- Maven ----
+target/
+
+# ---- IDE ----
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+
+# ---- Environnement ----
+.env
+
+# ---- Logs ----
+*.log
+logs/
+
+# ---- Données locales ----
+data/
+*.db
+
+# ---- OS ----
+Thumbs.db
+.DS_Store
+
+# ---- Artefacts compilés ----
+*.class
+
+# ---- Documentation & livrables internes (non versionnés) ----
+docs/
+report/
+rapport-tp.md
+README.md
+AGENTS.md
+.opencode/
+
+# ---- Supports de cours ----
+*.pdf
