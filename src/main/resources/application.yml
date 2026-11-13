@@ -1,0 +1,113 @@
+# TP4 - CQRS & Event Sourcing (Axon Framework / Spring Boot / Axon Server)
+# Modes de déploiement :
+#   local      (défaut) : event store + projections en H2 mémoire, connecteurs Axon locaux
+#   postgres            : event store JDBC + projections sur PostgreSQL (docker compose)
+#   axonserver          : event store + bus sur Axon Server (gRPC), projections sur PostgreSQL
+spring:
+  application:
+    name: tp4-cqrs-event
+  # Profil local actif par défaut (aucune configuration nécessaire pour démarrer)
+  # Activer le profil axonserver active automatiquement le profil postgres (base des projections)
+  profiles:
+    default: local
+    group:
+      axonserver: postgres
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8066
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+axon:
+  serializer:
+    events: jackson
+    messages: jackson
+    general: jackson
+  # Le connecteur Axon Server est présent dans le build mais désactivé par défaut :
+  # un seul artefact, la bascule se fait par profil/propriété (voir ADR-004).
+  axonserver:
+    enabled: false
+  eventhandling:
+    processors:
+      account-projection:
+        mode: tracking
+
+---
+# ============================ MODE LOCAL (défaut) ============================
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:h2:mem:tp4_cqrs_db;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  h2:
+    console:
+      enabled: true
+
+logging:
+  level:
+    ma.enset.tp4cqrs: INFO
+
+---
+# ============================ MODE POSTGRESQL ============================
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:event_sourcing_account_db}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:admin}
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+---
+# ============================ MODE AXON SERVER ============================
+# (le profil postgres est activé automatiquement pour les projections)
+spring:
+  config:
+    activate:
+      on-profile: axonserver
+
+axon:
+  axonserver:
+    enabled: true
+    servers: ${AXON_AXONSERVER_SERVERS:localhost:8124}
+
+---
+# ============================ PROFIL TEST (intégration) ============================
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: jdbc:h2:mem:tp4_cqrs_test_db;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+logging:
+  level:
+    ma.enset.tp4cqrs: INFO
