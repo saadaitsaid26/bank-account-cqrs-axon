@@ -1,0 +1,125 @@
+# TP4 - Infrastructure Docker : PostgreSQL (event store + projections), pgAdmin, Axon Server.
+#
+# Démarre l'infrastructure seule (app exécutée sur l'hôte avec mvnw, démo du cours) :
+#   docker compose up -d
+#
+# Démarre aussi l'application packagée dans Docker :
+#   .\mvnw.cmd clean package
+#   docker compose --profile full up -d --build
+#
+# Variables : voir .env.example (copier vers .env pour personnaliser).
+name: tp4-cqrs-event
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tp4-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-event_sourcing_account_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tp4-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-event_sourcing_account_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  pgadmin:
+    image: dpage/pgadmin4:8.12
+    container_name: tp4-pgadmin
+    environment:
+      # Attention : pgAdmin rejette les domaines spéciaux (.local, .test...) via PGADMIN_DEFAULT_EMAIL
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@tp4-cqrs.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-8088}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - tp4-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  axonserver:
+    image: axoniq/axonserver:4.6.10
+    container_name: tp4-axonserver
+    environment:
+      # Contact point publié aux clients Axon :
+      #  - 'localhost' (défaut) : application exécutée sur l'hôte (mvnw spring-boot:run), démo du cours ;
+      #  - 'axonserver' : application exécutée elle aussi dans Docker (profil Compose 'full').
+      AXONIQ_AXONSERVER_HOSTNAME: ${AXONSERVER_HOSTNAME:-localhost}
+      AXONIQ_AXONSERVER_NAME: tp4-axonserver
+      JAVA_TOOL_OPTIONS: "-Xmx512m"
+    ports:
+      - "${AXONSERVER_HTTP_PORT:-8024}:8024"   # UI web + REST
+      - "${AXONSERVER_GRPC_PORT:-8124}:8124"   # gRPC (clients Axon)
+    volumes:
+      - axonserver_data:/axonserver/data
+      - axonserver_events:/axonserver/events
+      - axonserver_log:/axonserver/log
+      # Healthcheck : l'image 4.6.10 n'embarque ni shell ni curl (JRE Debian minimal).
+      # Un mini-client HTTP Java est compilé sur l'hôte (javac --release 11) et monté ici.
+      - ./docker/axonserver-healthcheck/AxonServerHealthCheck.class:/axonserver/tp4-healthcheck/AxonServerHealthCheck.class:ro
+    networks:
+      - tp4-net
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/axonserver/tp4-healthcheck", "AxonServerHealthCheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  # Optionnel : l'application elle-même conteneurisée (mode axonserver + postgres).
+  app:
+    profiles: ["full"]
+    build:
+      context: .
+    image: tp4-cqrs-event:1.0.0
+    container_name: tp4-app
+    environment:
+      SPRING_PROFILES_ACTIVE: axonserver
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-event_sourcing_account_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
+      AXON_AXONSERVER_SERVERS: ${AXONSERVER_HOSTNAME:-localhost}:8124
+    ports:
+      - "${APP_PORT:-8066}:8066"
+    networks:
+      - tp4-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      axonserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8066/actuator/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+networks:
+  tp4-net:
+    name: tp4-net
+
+volumes:
+  postgres_data:
+    name: tp4_postgres_data
+  pgadmin_data:
+    name: tp4_pgadmin_data
+  axonserver_data:
+    name: tp4_axonserver_data
+  axonserver_events:
+    name: tp4_axonserver_events
+  axonserver_log:
+    name: tp4_axonserver_log
