@@ -1,0 +1,269 @@
+{
+  "info": {
+    "_postman_id": "b1d0a4c2-4f1e-4c9a-9f1a-tp4cqrs00001",
+    "name": "TP4 - CQRS & Event Sourcing (comptes bancaires)",
+    "description": "Collection Postman du TP4 (Axon Framework / Spring Boot / Axon Server).\n\nVariables : baseUrl (défaut http://localhost:8066), accountId (définir après création d'un compte, ou via le champ test).\n\nOrdre suggéré :\n1. Create account -> récupérer l'identifiant du body (201)\n2. Credit / Debit\n3. Consulter l'event store, la projection et le relevé\n4. Lifecycle : suspend / activate / block\n5. Replay des projections\n6. Après un changement de backend d'event store (postgres ↔ Axon Server) : Reset tracking tokens\n\nNote : la requête « Watch (SSE) » est un flux Server-Sent Events — Postman l'affiche en mode continu ; utiliser plutôt curl --no-buffer ou un navigateur pour le test interactif.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8066", "type": "string" },
+    { "key": "accountId", "value": "cole-lister-l'identifiant-du-compte", "type": "string" },
+    { "key": "currency", "value": "MAD", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Commands side",
+      "item": [
+        {
+          "name": "Create account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('accountId', pm.response.text().replace(/\"/g, ''));",
+                  "    console.log('accountId =', pm.collectionVariables.get('accountId'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "accounts"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"{{currency}}\",\n  \"initialBalance\": 1000.00\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Crée un compte (compte auto-activé : événements AccountCreatedEvent puis AccountActivatedEvent). Réponse 201 avec l'identifiant du compte."
+          }
+        },
+        {
+          "name": "Credit account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/accounts/{{accountId}}/credit",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "accounts", "{{accountId}}", "credit"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 250.50,\n  \"currency\": \"{{currency}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Crédite le compte (compte ACTIVATED requis, devise cohérente). 200 ; 400 si règle refusée."
+          }
+        },
+        {
+          "name": "Debit account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/accounts/{{accountId}}/debit",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "accounts", "{{accountId}}", "debit"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100.00,\n  \"currency\": \"{{currency}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Débite le compte (compte ACTIVATED requis, solde suffisant). 200 ; 409 si solde insuffisant."
+          }
+        },
+        {
+          "name": "Activate account",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/commands/accounts/{{accountId}}/activate",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "accounts", "{{accountId}}", "activate"]
+            },
+            "description": "Active le compte (CREATED/SUSPENDED -> ACTIVATED). 400 si déjà ACTIVATED ou BLOCKED."
+          }
+        },
+        {
+          "name": "Suspend account",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/commands/accounts/{{accountId}}/suspend",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "accounts", "{{accountId}}", "suspend"]
+            },
+            "description": "Suspend le compte (ACTIVATED -> SUSPENDED). 400 si déjà SUSPENDED/BLOCKED/CREATED."
+          }
+        },
+        {
+          "name": "Block account",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/commands/accounts/{{accountId}}/block",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "accounts", "{{accountId}}", "block"]
+            },
+            "description": "Bloque le compte (statut terminal). 400 si déjà BLOCKED."
+          }
+        },
+        {
+          "name": "Get aggregate events (event store)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/commands/events/{{accountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "events", "{{accountId}}"]
+            },
+            "description": "Lit les événements de l'agrégat dans l'event store (eventStore.readEvents(id).asStream()). 404 si le compte est inconnu."
+          }
+        },
+        {
+          "name": "Health check (command side)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/commands/health-check",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "health-check"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Query side",
+      "item": [
+        {
+          "name": "List accounts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/query/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["query", "accounts"]
+            }
+          }
+        },
+        {
+          "name": "Get account by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/query/accounts/{{accountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["query", "accounts", "{{accountId}}"]
+            },
+            "description": "Projection du compte (solde, statut, devise, createdAt). 404 si inconnu."
+          }
+        },
+        {
+          "name": "Get account statement",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/query/accounts/{{accountId}}/statement",
+              "host": ["{{baseUrl}}"],
+              "path": ["query", "accounts", "{{accountId}}", "statement"]
+            },
+            "description": "Relevé : vue du compte + liste chronologique des opérations (CREDIT/DEBIT)."
+          }
+        },
+        {
+          "name": "Watch account (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/query/accounts/{{accountId}}/watch",
+              "host": ["{{baseUrl}}"],
+              "path": ["query", "accounts", "{{accountId}}", "watch"]
+            },
+            "description": "Flux text/event-stream : réponse initiale (dernière opération connue ou vue vide), puis chaque nouvelle opération est poussée en temps réel (subscription query + QueryUpdateEmitter)."
+          }
+        },
+        {
+          "name": "Replay events (reset projections)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/query/replayEvents",
+              "host": ["{{baseUrl}}"],
+              "path": ["query", "replayEvents"]
+            },
+            "description": "Rejoue tous les événements sur la projection 'account-projection' (shutDown -> resetTokens -> start, @ResetHandler supprime les vues). À utiliser quand le backend d'event store n'a PAS changé."
+          }
+        },
+        {
+          "name": "Reset tracking tokens (backend switch)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/query/resetTokens",
+              "host": ["{{baseUrl}}"],
+              "path": ["query", "resetTokens"]
+            },
+            "description": "Remède au changement de backend d'event store (postgres ↔ Axon Server) : purge les vues, supprime les tokens de suivi (types incompatibles : GapAwareTrackingToken vs GlobalSequence/IndexTrackingToken) via l'API publique TokenStore, puis redémarre le processor qui repart du début de l'event store courant et reconstruit toutes les projections. 200."
+          }
+        }
+      ]
+    },
+    {
+      "name": "OpenAPI",
+      "item": [
+        {
+          "name": "Swagger UI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/swagger-ui.html",
+              "host": ["{{baseUrl}}"],
+              "path": ["swagger-ui.html"]
+            }
+          }
+        },
+        {
+          "name": "OpenAPI JSON",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v3/api-docs",
+              "host": ["{{baseUrl}}"],
+              "path": ["v3", "api-docs"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
